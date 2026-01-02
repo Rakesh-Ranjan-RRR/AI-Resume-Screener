@@ -1,0 +1,8 @@
+streamlit;
+scikit - learn;
+nltk;
+pdfplumber;
+sentence - transformers;
+PyPDF2;
+numpy;
+matplotlib;
