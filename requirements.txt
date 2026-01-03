@@ -5,4 +5,3 @@ pdfplumber;
 sentence - transformers;
 PyPDF2;
 numpy;
-matplotlib;
