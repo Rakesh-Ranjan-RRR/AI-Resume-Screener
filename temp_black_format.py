@@ -1,158 +1,136 @@
 import streamlit as st
-from PyPDF2 import PdfReader
 import re
+from collections import Counter
+import pdfplumber
 
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="AI Resume Screener", layout="wide")
 
-# ================= SKILL DATABASE =================
-SKILLS_DB = {
-    "python", "machine learning", "deep learning", "sql", "nlp",
-    "data science", "pandas", "numpy", "scikit-learn",
-    "tensorflow", "pytorch", "aws", "docker", "kubernetes",
-    "api", "automation", "n8n", "make.com", "zoho",
-    "ai", "ml", "cloud", "computer vision"
-}
-
-# ================= FUNCTIONS =================
-def clean_text(text):
-    return re.sub(r"[^a-zA-Z0-9\s]", " ", text.lower())
-
-def extract_skills(text):
-    text = clean_text(text)
-    return {skill for skill in SKILLS_DB if skill in text}
-
-def extract_years(text):
-    matches = re.findall(r"(\d+)\s*\+?\s*years?", text.lower())
-    if matches:
-        return max(map(int, matches))
-    return 0
-
-def ats_score(resume_text, job_text):
-    resume_skills = extract_skills(resume_text)
-    job_skills = extract_skills(job_text)
-
-    matched = resume_skills & job_skills
-    missing = job_skills - resume_skills
-
-    resume_years = extract_years(resume_text)
-    required_years = extract_years(job_text)
-
-    skill_score = (len(matched) / max(len(job_skills), 1)) * 100
-    experience_bonus = 15 if resume_years >= required_years else -10
-    final_score = max(50, min(skill_score + experience_bonus, 95))
-
-    return round(final_score, 2), matched, missing, resume_years, required_years
-
-def read_pdf(file):
-    reader = PdfReader(file)
-    return " ".join(page.extract_text() or "" for page in reader.pages)
-
-def ai_rewrite_resume(matched, missing, resume_years):
-    bullets = []
-
-    for skill in matched:
-        bullets.append(
-            f"• Applied {skill.title()} in real-world projects to deliver scalable and efficient solutions."
-        )
-
-    if resume_years:
-        bullets.append(
-            f"• Demonstrated {resume_years}+ years of hands-on experience working on production-level systems."
-        )
-
-    if missing:
-        bullets.append(
-            f"• Currently enhancing expertise in {', '.join(list(missing)[:5])} to align with advanced role requirements."
-        )
-
-    bullets.append(
-        "• Optimized solutions following ATS best practices and industry-aligned keywords."
-    )
-
-    return bullets
-
-# ================= UI STYLING =================
+# ---------------- STYLES ----------------
 st.markdown("""
 <style>
 body {
-    background: linear-gradient(135deg, #e3f2fd, #e0f7fa);
+    background-color: #eef7ff;
 }
-.card {
-    background: #e3f2fd;
-    padding: 30px;
-    border-radius: 20px;
-    box-shadow: 0px 10px 30px rgba(0, 123, 255, 0.25);
+.main {
+    background-color: #eef7ff;
+}
+.block {
+    background: white;
+    padding: 20px;
+    border-radius: 14px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+}
+h1 {
+    color: #0f172a;
 }
 textarea {
-    background-color: #f5f9ff !important;
-    color: #000000 !important;
+    background-color: #f8fafc !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="card">', unsafe_allow_html=True)
-st.title("🧠 AI Resume Screener")
-st.caption("ATS-style AI tool to analyze & rewrite resumes")
-st.markdown('</div>', unsafe_allow_html=True)
+# ---------------- HEADER ----------------
+st.markdown("""
+<div class="block">
+<h1>🧠 AI Resume Screener</h1>
+<p>ATS-style AI tool to compare resumes with job descriptions</p>
+</div>
+""", unsafe_allow_html=True)
 
-# ================= INPUTS =================
-col1, col2 = st.columns(2)
+st.write("")
 
-with col1:
-    st.subheader("📄 Upload Resume PDF")
-    pdf = st.file_uploader("Upload PDF", type=["pdf"])
-    st.subheader("✍️ Paste Resume Text")
-    resume_text = st.text_area("Resume Text", height=250)
+# ---------------- PDF READER ----------------
+def read_pdf(file):
+    text = ""
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() or ""
+    return text
 
-with col2:
-    st.subheader("📌 Paste Job Description")
-    job_text = st.text_area("Job Description", height=250)
+# ---------------- SKILL LIST (REAL SKILLS ONLY) ----------------
+TECH_SKILLS = [
+    "python","machine learning","deep learning","nlp","sql","tensorflow",
+    "pytorch","scikit-learn","pandas","numpy","data analysis","automation",
+    "aws","azure","gcp","docker","kubernetes","api","flask","fastapi",
+    "llm","openai","langchain","vector database","pinecone","faiss",
+    "airflow","etl","power bi","tableau"
+]
 
-# ================= ANALYSIS =================
-if st.button("🚀 Analyze & Rewrite Resume"):
-    if not job_text.strip():
-        st.error("Please provide Job Description")
-        st.stop()
+# ---------------- EXPERIENCE EXTRACTOR ----------------
+def extract_experience(text):
+    matches = re.findall(r'(\d+)\s*\+?\s*years?', text.lower())
+    return max(map(int, matches)) if matches else 0
 
-    if pdf:
-        resume_text += " " + read_pdf(pdf)
+# ---------------- TEXT CLEANER ----------------
+def clean_text(text):
+    text = text.lower()
+    text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)
+    return text
 
-    if not resume_text.strip():
-        st.error("Please provide Resume")
-        st.stop()
+# ---------------- UI INPUTS ----------------
+left, right = st.columns(2)
 
-    score, matched, missing, resume_years, required_years = ats_score(
-        resume_text, job_text
-    )
+with left:
+    st.markdown("### 📄 Upload Resume (PDF)")
+    resume_file = st.file_uploader("Upload PDF", type=["pdf"])
+    st.markdown("### ✍️ Paste Resume Text")
+    resume_text = st.text_area("Resume Text", height=220)
 
-    st.markdown("## 📊 ATS Match Score")
-    st.progress(int(score))
-    st.metric("Match Percentage", f"{score}%")
+with right:
+    st.markdown("### 📌 Paste Job Description")
+    job_text = st.text_area("Job Description", height=480)
 
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.subheader("❌ Missing Skills")
-        for s in missing:
-            st.write(f"• {s}")
-
-    with c2:
-        st.subheader("✅ Matched Skills")
-        for s in matched:
-            st.write(f"• {s}")
-
-    st.subheader("📅 Experience Check")
-    if resume_years >= required_years:
-        st.success(f"Experience OK ({resume_years} / {required_years} years)")
+# ---------------- ANALYZE ----------------
+if st.button("🚀 Analyze Resume"):
+    if not job_text or (not resume_text and not resume_file):
+        st.warning("Please provide resume and job description.")
     else:
-        st.error(f"Experience Gap ({resume_years} / {required_years} years)")
+        if resume_file:
+            resume_text += read_pdf(resume_file)
 
-    # ================= AI RESUME REWRITE =================
-    st.subheader("🤖 AI-Generated ATS Resume Rewrite")
+        resume_text = clean_text(resume_text)
+        job_text = clean_text(job_text)
 
-    rewritten = ai_rewrite_resume(matched, missing, resume_years)
+        resume_exp = extract_experience(resume_text)
+        job_exp = extract_experience(job_text)
 
-    rewrite_text = "\n".join(rewritten)
-    st.text_area("Optimized Resume Points (Copy-Paste Ready)", rewrite_text, height=220)
+        resume_skills = set(skill for skill in TECH_SKILLS if skill in resume_text)
+        job_skills = set(skill for skill in TECH_SKILLS if skill in job_text)
 
-    st.success("✔ Resume rewritten using ATS keywords and experience logic")
+        matched = resume_skills & job_skills
+        missing = job_skills - resume_skills
+
+        # -------- MATCH SCORE LOGIC (FIXED) --------
+        skill_score = (len(matched) / max(len(job_skills), 1)) * 70
+        exp_score = 30 if resume_exp >= job_exp else (resume_exp / max(job_exp,1)) * 30
+        final_score = round(skill_score + exp_score, 2)
+
+        st.markdown("---")
+        st.markdown(f"## 🎯 Resume Match Score: **{final_score}%**")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("### ❌ Missing Skills")
+            for s in sorted(missing):
+                st.write("•", s)
+
+        with col2:
+            st.markdown("### ✅ Matched Skills")
+            for s in sorted(matched):
+                st.write("•", s)
+
+        st.markdown("### 📊 Experience Check")
+        if resume_exp >= job_exp:
+            st.success(f"Experience requirement met ({resume_exp} years)")
+        else:
+            st.error(f"Experience gap: Resume {resume_exp} yrs | Required {job_exp} yrs")
+
+        st.markdown("### 🤖 AI Resume Suggestions")
+        if missing:
+            st.write("• Add missing technical skills from job description.")
+        if resume_exp < job_exp:
+            st.write("• Highlight relevant experience clearly.")
+        st.write("• Use exact keywords from job description.")
+
