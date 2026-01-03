@@ -1,136 +1,110 @@
 import streamlit as st
-import re
-from collections import Counter
+import nltk
 import pdfplumber
+from PyPDF2 import PdfReader
+import re
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-# ---------------- PAGE CONFIG ----------------
+nltk.download("stopwords")
+from nltk.corpus import stopwords
+
 st.set_page_config(page_title="AI Resume Screener", layout="wide")
 
-# ---------------- STYLES ----------------
-st.markdown("""
-<style>
-body {
-    background-color: #eef7ff;
-}
-.main {
-    background-color: #eef7ff;
-}
-.block {
-    background: white;
-    padding: 20px;
-    border-radius: 14px;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
-}
-h1 {
-    color: #0f172a;
-}
-textarea {
-    background-color: #f8fafc !important;
-}
-</style>
-""", unsafe_allow_html=True)
+# ---------- UI ----------
+st.markdown(
+    """
+    <style>
+    .main {
+        background: linear-gradient(135deg, #e8f2ff, #f5fbff);
+    }
+    .header {
+        background: linear-gradient(135deg, #b6dbff, #d9ecff);
+        padding: 30px;
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-# ---------------- HEADER ----------------
-st.markdown("""
-<div class="block">
-<h1>🧠 AI Resume Screener</h1>
-<p>ATS-style AI tool to compare resumes with job descriptions</p>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div class="header">
+        <h1>🧠 AI Resume Screener</h1>
+        <p>ATS-style resume vs job description matcher</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-st.write("")
+# ---------- INPUT ----------
+col1, col2 = st.columns(2)
 
-# ---------------- PDF READER ----------------
-def read_pdf(file):
+with col1:
+    resume_text = st.text_area("📄 Paste Resume Text", height=250)
+    uploaded_pdf = st.file_uploader("Upload Resume PDF (optional)", type=["pdf"])
+
+with col2:
+    jd_text = st.text_area("📌 Paste Job Description", height=250)
+
+# ---------- PDF EXTRACTION ----------
+def extract_pdf_text(pdf_file):
     text = ""
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            text += page.extract_text() or ""
+    reader = PdfReader(pdf_file)
+    for page in reader.pages:
+        text += page.extract_text() or ""
     return text
 
-# ---------------- SKILL LIST (REAL SKILLS ONLY) ----------------
-TECH_SKILLS = [
-    "python","machine learning","deep learning","nlp","sql","tensorflow",
-    "pytorch","scikit-learn","pandas","numpy","data analysis","automation",
-    "aws","azure","gcp","docker","kubernetes","api","flask","fastapi",
-    "llm","openai","langchain","vector database","pinecone","faiss",
-    "airflow","etl","power bi","tableau"
-]
+if uploaded_pdf:
+    resume_text = extract_pdf_text(uploaded_pdf)
 
-# ---------------- EXPERIENCE EXTRACTOR ----------------
-def extract_experience(text):
-    matches = re.findall(r'(\d+)\s*\+?\s*years?', text.lower())
-    return max(map(int, matches)) if matches else 0
-
-# ---------------- TEXT CLEANER ----------------
+# ---------- CLEAN TEXT ----------
 def clean_text(text):
     text = text.lower()
-    text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)
-    return text
+    text = re.sub(r"[^a-z\s]", "", text)
+    stop_words = set(stopwords.words("english"))
+    return " ".join([w for w in text.split() if w not in stop_words])
 
-# ---------------- UI INPUTS ----------------
-left, right = st.columns(2)
-
-with left:
-    st.markdown("### 📄 Upload Resume (PDF)")
-    resume_file = st.file_uploader("Upload PDF", type=["pdf"])
-    st.markdown("### ✍️ Paste Resume Text")
-    resume_text = st.text_area("Resume Text", height=220)
-
-with right:
-    st.markdown("### 📌 Paste Job Description")
-    job_text = st.text_area("Job Description", height=480)
-
-# ---------------- ANALYZE ----------------
+# ---------- ANALYZE ----------
 if st.button("🚀 Analyze Resume"):
-    if not job_text or (not resume_text and not resume_file):
-        st.warning("Please provide resume and job description.")
-    else:
-        if resume_file:
-            resume_text += read_pdf(resume_file)
+    if resume_text and jd_text:
+        resume_clean = clean_text(resume_text)
+        jd_clean = clean_text(jd_text)
 
-        resume_text = clean_text(resume_text)
-        job_text = clean_text(job_text)
+        vectorizer = TfidfVectorizer(ngram_range=(1,2))
+        tfidf = vectorizer.fit_transform([resume_clean, jd_clean])
 
-        resume_exp = extract_experience(resume_text)
-        job_exp = extract_experience(job_text)
+        score = cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0]
+        match_percent = round(score * 100, 2)
 
-        resume_skills = set(skill for skill in TECH_SKILLS if skill in resume_text)
-        job_skills = set(skill for skill in TECH_SKILLS if skill in job_text)
+        resume_words = set(resume_clean.split())
+        jd_words = set(jd_clean.split())
 
-        matched = resume_skills & job_skills
-        missing = job_skills - resume_skills
+        matched = sorted(resume_words & jd_words)
+        missing = sorted(jd_words - resume_words)
 
-        # -------- MATCH SCORE LOGIC (FIXED) --------
-        skill_score = (len(matched) / max(len(job_skills), 1)) * 70
-        exp_score = 30 if resume_exp >= job_exp else (resume_exp / max(job_exp,1)) * 30
-        final_score = round(skill_score + exp_score, 2)
+        st.subheader(f"✅ Resume Match Score: {match_percent}%")
+        st.progress(match_percent / 100)
 
-        st.markdown("---")
-        st.markdown(f"## 🎯 Resume Match Score: **{final_score}%**")
+        col3, col4 = st.columns(2)
 
-        col1, col2 = st.columns(2)
-
-        with col1:
+        with col3:
             st.markdown("### ❌ Missing Skills")
-            for s in sorted(missing):
-                st.write("•", s)
+            st.write(missing[:20])
 
-        with col2:
+        with col4:
             st.markdown("### ✅ Matched Skills")
-            for s in sorted(matched):
-                st.write("•", s)
-
-        st.markdown("### 📊 Experience Check")
-        if resume_exp >= job_exp:
-            st.success(f"Experience requirement met ({resume_exp} years)")
-        else:
-            st.error(f"Experience gap: Resume {resume_exp} yrs | Required {job_exp} yrs")
+            st.write(matched[:20])
 
         st.markdown("### 🤖 AI Resume Suggestions")
-        if missing:
-            st.write("• Add missing technical skills from job description.")
-        if resume_exp < job_exp:
-            st.write("• Highlight relevant experience clearly.")
-        st.write("• Use exact keywords from job description.")
+        if match_percent < 50:
+            st.info("Add missing keywords directly into skills & experience sections.")
+        elif match_percent < 75:
+            st.info("Optimize wording to better match job description keywords.")
+        else:
+            st.success("Your resume is ATS optimized!")
 
+    else:
+        st.warning("Please provide both Resume and Job Description")
